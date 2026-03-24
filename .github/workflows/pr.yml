@@ -40,6 +40,30 @@ jobs:
         with:
           node-version: 24
 
+      - name: Validate Dockerfile deps stage
+        run: |
+          missing=0
+
+          # Check all workspace package.json files are copied (exclude dev-only packages)
+          for pkg in $(find packages server ui cli -maxdepth 3 -name package.json -not -path '*/examples/*' -not -path '*/create-paperclip-plugin/*' -not -path '*/node_modules/*' | sort); do
+            dir="$(dirname "$pkg")"
+            if ! grep -q "COPY ${dir}/package.json" Dockerfile; then
+              echo "::error::Dockerfile deps stage missing: COPY ${pkg} ${dir}/"
+              missing=1
+            fi
+          done
+
+          # Check patches directory is copied if it exists
+          if [ -d patches ] && ! grep -q 'COPY patches/' Dockerfile; then
+            echo "::error::Dockerfile deps stage missing: COPY patches/ patches/"
+            missing=1
+          fi
+
+          if [ "$missing" -eq 1 ]; then
+            echo "Dockerfile deps stage is out of sync. Update it to include the missing files."
+            exit 1
+          fi
+
       - name: Validate dependency resolution when manifests change
         run: |
           changed="$(git diff --name-only "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}")"
