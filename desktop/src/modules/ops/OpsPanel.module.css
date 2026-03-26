@@ -1,51 +1,73 @@
+.layout {
+  display: grid;
+  grid-template-columns: 1fr 300px;
+  gap: 12px;
+  position: relative;
+  z-index: 1;
+}
+
+/* ── Task Board ── */
 .taskBoard {
   background: var(--card-bg);
   border: 1px solid var(--card-border);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);
   padding: var(--space-lg);
+  backdrop-filter: blur(12px);
+}
+
+.taskBoardHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-md);
+}
+
+.taskCount {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent-bright);
+  background: var(--accent-glow-sm);
+  border: 1px solid rgba(43, 127, 212, 0.20);
+  border-radius: 100px;
+  padding: 2px 9px;
 }
 
 .taskInput {
   display: flex;
   gap: var(--space-sm);
-  margin: var(--space-md) 0;
+  margin-bottom: var(--space-md);
 }
 
 .input {
   flex: 1;
-  background: var(--bg-primary);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: var(--space-sm) var(--space-md);
-  color: var(--text-primary);
-  font-family: var(--font-sans);
+  padding: 8px 12px;
   font-size: 13px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-primary);
   outline: none;
   transition: border-color var(--transition-fast);
+  font-family: var(--font-sans);
 }
-
+.input::placeholder { color: var(--text-muted); }
 .input:focus {
   border-color: var(--accent-bright);
-}
-
-.input::placeholder {
-  color: var(--text-muted);
+  box-shadow: 0 0 0 2px rgba(43, 127, 212, 0.12);
 }
 
 .addBtn {
-  background: var(--accent-primary);
-  border: none;
+  padding: 8px 16px;
+  font-size: 16px;
   border-radius: var(--radius-sm);
-  color: var(--text-primary);
-  width: 36px;
-  font-size: 18px;
+  border: none;
+  background: var(--accent-primary);
+  color: #fff;
   cursor: pointer;
   transition: background var(--transition-fast);
+  line-height: 1;
 }
-
-.addBtn:hover {
-  background: var(--accent-hover);
-}
+.addBtn:hover { background: var(--accent-bright); }
 
 .taskList {
   display: flex;
@@ -57,102 +79,119 @@
   display: flex;
   align-items: center;
   gap: var(--space-sm);
-  padding: var(--space-sm);
+  padding: 9px var(--space-sm);
   border-radius: var(--radius-sm);
   transition: background var(--transition-fast);
 }
-
-.task:hover {
-  background: var(--bg-elevated);
-}
-
+.task:hover { background: rgba(255, 255, 255, 0.03); }
 .task.done .taskText {
   color: var(--text-muted);
   text-decoration: line-through;
 }
 
 .checkbox {
-  width: 20px;
-  height: 20px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  border: 1.5px solid rgba(255, 255, 255, 0.18);
   background: transparent;
-  color: var(--success);
-  font-size: 12px;
   cursor: pointer;
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  flex-shrink: 0;
+  font-size: 10px;
+  color: transparent;
+  transition: all var(--transition-fast);
+}
+.checkbox:hover { border-color: var(--accent-bright); }
+.checkbox.checked {
+  background: var(--accent-primary);
+  border-color: var(--accent-primary);
+  color: #fff;
 }
 
 .taskText {
   flex: 1;
   font-size: 13px;
-  color: var(--text-primary);
+  color: var(--text-secondary);
 }
 
 .deleteBtn {
+  font-size: 16px;
+  color: var(--text-muted);
   background: none;
   border: none;
-  color: var(--text-muted);
   cursor: pointer;
-  font-size: 16px;
+  padding: 0 4px;
   opacity: 0;
-  transition: opacity var(--transition-fast);
+  transition: opacity var(--transition-fast), color var(--transition-fast);
+  line-height: 1;
+}
+.task:hover .deleteBtn { opacity: 1; }
+.deleteBtn:hover { color: var(--danger); }
+
+.divider {
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  padding: var(--space-md) var(--space-sm) var(--space-xs);
 }
 
-.task:hover .deleteBtn {
-  opacity: 1;
+.empty {
+  font-size: 12.5px;
+  color: var(--text-muted);
+  text-align: center;
+  padding: var(--space-xl);
 }
 
-.deleteBtn:hover {
-  color: var(--danger);
-}
-
+/* ── Tools ── */
 .tools {
-  background: var(--card-bg);
-  border: 1px solid var(--card-border);
-  border-radius: var(--radius-md);
-  padding: var(--space-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
 }
 
 .toolGrid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: var(--space-sm);
-  margin-top: var(--space-md);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .toolCard {
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: var(--space-xs);
-  padding: var(--space-lg) var(--space-md);
-  background: var(--bg-primary);
-  border: 1px solid var(--border);
+  gap: var(--space-md);
+  padding: var(--space-md) var(--space-lg);
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
   border-radius: var(--radius-md);
   cursor: pointer;
-  transition: all var(--transition-normal);
+  text-align: left;
+  transition: border-color var(--transition-fast), background var(--transition-fast);
+  backdrop-filter: blur(12px);
+}
+.toolCard:hover {
+  border-color: rgba(43, 127, 212, 0.25);
+  background: rgba(43, 127, 212, 0.05);
+}
+
+.toolIcon { font-size: 18px; width: 28px; text-align: center; }
+
+.toolLabel {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 600;
   color: var(--text-primary);
 }
 
-.toolCard:hover {
-  border-color: var(--accent-primary);
-  background: var(--bg-elevated);
-}
-
-.toolIcon {
-  font-size: 24px;
-}
-
-.toolLabel {
-  font-size: 12px;
-  font-weight: 600;
-}
-
 .toolStatus {
-  font-size: 10px;
+  font-size: 10.5px;
   color: var(--text-muted);
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 100px;
+  padding: 2px 8px;
 }

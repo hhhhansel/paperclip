@@ -4,6 +4,7 @@ import { AgentsPanel } from "./modules/agents/AgentsPanel";
 import { CaelPanel } from "./modules/cael/CaelPanel";
 import { MaisonPanel } from "./modules/mm/MaisonPanel";
 import { OpsPanel } from "./modules/ops/OpsPanel";
+import { CreativePanel } from "./modules/creative/CreativePanel";
 import "./theme/global.css";
 
 function App() {
@@ -17,6 +18,7 @@ function App() {
             <Route path="/cael" element={<CaelPanel />} />
             <Route path="/mm" element={<MaisonPanel />} />
             <Route path="/ops" element={<OpsPanel />} />
+            <Route path="/creative" element={<CreativePanel />} />
           </Routes>
         </main>
       </div>
