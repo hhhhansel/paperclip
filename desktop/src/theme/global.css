@@ -12,7 +12,7 @@ html, body, #root {
 }
 
 body {
-  background: var(--bg-primary);
+  background: var(--bg-base);
   color: var(--text-primary);
   font-family: var(--font-sans);
   font-size: 14px;
@@ -22,52 +22,31 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* Scrollbar styling */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.10); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.18); }
 
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-::-webkit-scrollbar-thumb {
-  background: var(--bg-elevated);
-  border-radius: 3px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: var(--text-muted);
-}
-
-/* Selection */
 ::selection {
   background: var(--accent-primary);
-  color: var(--text-primary);
+  color: #fff;
 }
 
-/* Focus styles */
 :focus-visible {
-  outline: 2px solid var(--accent-bright);
+  outline: 1.5px solid var(--accent-bright);
   outline-offset: 2px;
 }
 
-/* Links */
 a {
   color: var(--accent-bright);
   text-decoration: none;
   transition: color var(--transition-fast);
 }
+a:hover { color: var(--text-primary); }
 
-a:hover {
-  color: var(--text-primary);
-}
-
-/* Code */
 code {
   font-family: var(--font-mono);
-  font-size: 0.9em;
+  font-size: 0.88em;
   background: var(--bg-elevated);
   padding: 2px 6px;
   border-radius: var(--radius-sm);
