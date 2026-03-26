@@ -1,0 +1,122 @@
+.module {
+  padding: var(--space-xl);
+  height: 100%;
+  overflow-y: auto;
+}
+
+.moduleHeader {
+  margin-bottom: var(--space-xl);
+}
+
+.moduleTitle {
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: var(--letter-spacing-tight);
+  color: var(--text-primary);
+  margin-bottom: var(--space-xs);
+}
+
+.moduleSubtitle {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: var(--space-md);
+}
+
+.section {
+  margin-top: var(--space-xl);
+}
+
+.sectionTitle {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: var(--space-md);
+}
+
+.checklist {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-lg);
+}
+
+.checkItem {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  font-size: 13px;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.checkItem input[type="checkbox"] {
+  accent-color: var(--accent-primary);
+}
+
+.placeholder {
+  font-size: 13px;
+  color: var(--text-muted);
+  background: var(--card-bg);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-xl);
+  text-align: center;
+}
+
+.roadmap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-lg);
+}
+
+.roadmapItem {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-md);
+}
+
+.roadmapDot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-top: 4px;
+  flex-shrink: 0;
+}
+
+.roadmapDot[data-status="active"] {
+  background: var(--success);
+}
+
+.roadmapDot[data-status="pending"] {
+  background: var(--warning);
+}
+
+.roadmapDot[data-status="inactive"] {
+  background: var(--text-muted);
+}
+
+.roadmapTitle {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.roadmapSubtitle {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}

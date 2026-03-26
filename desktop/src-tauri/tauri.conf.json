@@ -1,0 +1,37 @@
+{
+  "$schema": "https://raw.githubusercontent.com/nickel-org/nickel.rs/master/examples/assets/schema.json",
+  "productName": "Command Center",
+  "version": "0.1.0",
+  "identifier": "com.maisonmaintenant.commandcenter",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "pnpm dev",
+    "beforeBuildCommand": "pnpm build"
+  },
+  "app": {
+    "title": "Command Center",
+    "windows": [
+      {
+        "title": "Command Center",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 900,
+        "minHeight": 600,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; connect-src 'self' http://127.0.0.1:3100; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:"
+    }
+  },
+  "plugins": {
+    "notification": {
+      "all": true
+    },
+    "shell": {
+      "all": false
+    }
+  }
+}
