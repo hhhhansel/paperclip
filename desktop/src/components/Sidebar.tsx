@@ -5,6 +5,7 @@ const navItems = [
   { to: "/",        label: "Command Center", icon: "◉" },
   { to: "/cael",    label: "CAEL",           icon: "◆" },
   { to: "/mm",      label: "Maison MM",      icon: "■" },
+  { to: "/content", label: "Content",        icon: "📅" },
   { to: "/ops",     label: "Personal Ops",   icon: "▸" },
   { to: "/creative",label: "Creative",       icon: "✦", dimmed: true },
 ];

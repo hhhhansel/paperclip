@@ -5,6 +5,7 @@ import { CaelPanel } from "./modules/cael/CaelPanel";
 import { MaisonPanel } from "./modules/mm/MaisonPanel";
 import { OpsPanel } from "./modules/ops/OpsPanel";
 import { CreativePanel } from "./modules/creative/CreativePanel";
+import { ContentPanel } from "./modules/content/ContentPanel";
 import "./theme/global.css";
 
 function App() {
@@ -19,6 +20,7 @@ function App() {
             <Route path="/mm" element={<MaisonPanel />} />
             <Route path="/ops" element={<OpsPanel />} />
             <Route path="/creative" element={<CreativePanel />} />
+            <Route path="/content" element={<ContentPanel />} />
           </Routes>
         </main>
       </div>
