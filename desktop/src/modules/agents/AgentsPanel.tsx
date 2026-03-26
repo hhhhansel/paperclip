@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { open } from "@tauri-apps/plugin-shell";
+import { load } from "@tauri-apps/plugin-store";
 import { ModuleCard } from "../../components/ModuleCard";
 import styles from "../shared.module.css";
 
@@ -11,38 +12,46 @@ interface HealthStatus {
 
 type ConnectorState = "disconnected" | "connecting" | "connected" | "error";
 
-const STORAGE_KEYS = {
-  claude: "connector_claude_connected",
-  gemini: "connector_gemini_connected",
-  zo: "connector_zo_apikey",
-};
+// Encrypted store backed by OS keychain via tauri-plugin-store
+async function getStore() {
+  return load("connectors.bin", { defaults: {}, autoSave: true });
+}
 
-// Claude uses its CLI OAuth flow (browser-based)
+async function readKey(key: string): Promise<string | null> {
+  const store = await getStore();
+  return (await store.get<string>(key)) ?? null;
+}
+
+async function writeKey(key: string, value: string) {
+  const store = await getStore();
+  await store.set(key, value);
+}
+
+async function deleteKey(key: string) {
+  const store = await getStore();
+  await store.delete(key);
+}
+
 const CLAUDE_OAUTH_URL =
   "https://claude.ai/oauth/authorize?client_id=paperclip-desktop&response_type=code&scope=api";
 
-// Gemini OAuth (Google sign-in)
 const GEMINI_OAUTH_URL =
   "https://accounts.google.com/o/oauth2/v2/auth?client_id=paperclip-desktop&response_type=code&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fgenerativeai&redirect_uri=paperclip%3A%2F%2Foauth%2Fgemini";
 
-function loadState(key: string): boolean {
-  return localStorage.getItem(key) === "true";
-}
-
 export function AgentsPanel() {
   const [health, setHealth] = useState<HealthStatus | null>(null);
-
-  const [claudeState, setClaudeState] = useState<ConnectorState>(
-    loadState(STORAGE_KEYS.claude) ? "connected" : "disconnected"
-  );
-  const [geminiState, setGeminiState] = useState<ConnectorState>(
-    loadState(STORAGE_KEYS.gemini) ? "connected" : "disconnected"
-  );
-  const [zoKey, setZoKey] = useState<string>(
-    localStorage.getItem(STORAGE_KEYS.zo) ?? ""
-  );
+  const [claudeState, setClaudeState] = useState<ConnectorState>("disconnected");
+  const [geminiState, setGeminiState] = useState<ConnectorState>("disconnected");
+  const [zoKey, setZoKey] = useState<string>("");
   const [zoEditing, setZoEditing] = useState(false);
   const [zoInput, setZoInput] = useState("");
+
+  // Load persisted state from secure store on mount
+  useEffect(() => {
+    readKey("claude_connected").then((v) => v === "true" && setClaudeState("connected"));
+    readKey("gemini_connected").then((v) => v === "true" && setGeminiState("connected"));
+    readKey("zo_api_key").then((v) => v && setZoKey(v));
+  }, []);
 
   useEffect(() => {
     fetch("/api/health")
@@ -51,17 +60,16 @@ export function AgentsPanel() {
       .catch(() => setHealth(null));
   }, []);
 
-  // Listen for OAuth callback via deep link (tauri://oauth/...)
+  // Deep-link OAuth callback
   useEffect(() => {
-    // Deep-link handler wired in lib.rs will post messages here
     const handler = (e: MessageEvent) => {
       if (e.data?.type === "oauth_callback") {
         if (e.data.provider === "claude") {
-          localStorage.setItem(STORAGE_KEYS.claude, "true");
+          writeKey("claude_connected", "true");
           setClaudeState("connected");
         }
         if (e.data.provider === "gemini") {
-          localStorage.setItem(STORAGE_KEYS.gemini, "true");
+          writeKey("gemini_connected", "true");
           setGeminiState("connected");
         }
       }
@@ -74,11 +82,6 @@ export function AgentsPanel() {
     setClaudeState("connecting");
     try {
       await open(CLAUDE_OAUTH_URL);
-      // Mark connected optimistically — real token exchange happens via deep-link callback
-      setTimeout(() => {
-        localStorage.setItem(STORAGE_KEYS.claude, "true");
-        setClaudeState("connected");
-      }, 3000);
     } catch {
       setClaudeState("error");
     }
@@ -88,27 +91,23 @@ export function AgentsPanel() {
     setGeminiState("connecting");
     try {
       await open(GEMINI_OAUTH_URL);
-      setTimeout(() => {
-        localStorage.setItem(STORAGE_KEYS.gemini, "true");
-        setGeminiState("connected");
-      }, 3000);
     } catch {
       setGeminiState("error");
     }
   }
 
-  function disconnectClaude() {
-    localStorage.removeItem(STORAGE_KEYS.claude);
+  async function disconnectClaude() {
+    await deleteKey("claude_connected");
     setClaudeState("disconnected");
   }
 
-  function disconnectGemini() {
-    localStorage.removeItem(STORAGE_KEYS.gemini);
+  async function disconnectGemini() {
+    await deleteKey("gemini_connected");
     setGeminiState("disconnected");
   }
 
-  function saveZoKey() {
-    localStorage.setItem(STORAGE_KEYS.zo, zoInput);
+  async function saveZoKey() {
+    await writeKey("zo_api_key", zoInput);
     setZoKey(zoInput);
     setZoEditing(false);
   }
@@ -123,7 +122,7 @@ export function AgentsPanel() {
     if (s === "connected") return `${label} connected`;
     if (s === "connecting") return "Opening browser — approve in your browser…";
     if (s === "error") return "Connection failed — try again";
-    return `OAuth not connected — connect to enable`;
+    return "OAuth not connected — connect to enable";
   }
 
   return (
@@ -170,20 +169,13 @@ export function AgentsPanel() {
           title="Zo Computer"
           icon="◉"
           status={zoKey ? "active" : "inactive"}
-          subtitle={
-            zoKey
-              ? `API key set (${zoKey.slice(0, 6)}…)`
-              : "API key not configured"
-          }
+          subtitle={zoKey ? `API key set (${zoKey.slice(0, 6)}…)` : "API key not configured"}
           action={
             zoEditing
               ? undefined
               : {
                   label: zoKey ? "Update key" : "Add API key",
-                  onClick: () => {
-                    setZoInput(zoKey);
-                    setZoEditing(true);
-                  },
+                  onClick: () => { setZoInput(zoKey); setZoEditing(true); },
                 }
           }
         >
@@ -198,15 +190,8 @@ export function AgentsPanel() {
                 onKeyDown={(e) => e.key === "Enter" && saveZoKey()}
                 autoFocus
               />
-              <button className={styles.inlineSave} onClick={saveZoKey}>
-                Save
-              </button>
-              <button
-                className={styles.inlineCancel}
-                onClick={() => setZoEditing(false)}
-              >
-                ✕
-              </button>
+              <button className={styles.inlineSave} onClick={saveZoKey}>Save</button>
+              <button className={styles.inlineCancel} onClick={() => setZoEditing(false)}>✕</button>
             </div>
           )}
         </ModuleCard>
@@ -214,7 +199,7 @@ export function AgentsPanel() {
           title="OpenClaw"
           icon="◉"
           status="inactive"
-          subtitle="Coming soon — placeholder"
+          subtitle="Coming soon"
         />
       </div>
 
@@ -226,11 +211,7 @@ export function AgentsPanel() {
             icon="⬡"
             status={health?.status === "ok" ? "active" : "inactive"}
             value={health?.version ?? "—"}
-            subtitle={
-              health
-                ? `Mode: ${health.deploymentMode}`
-                : "Unable to connect to backend"
-            }
+            subtitle={health ? `Mode: ${health.deploymentMode}` : "Unable to connect to backend"}
           />
           <ModuleCard
             title="Audit Trail"

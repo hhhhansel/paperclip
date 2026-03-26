@@ -5,6 +5,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_store::Builder::default().build())
         .setup(|app| {
             let window = app.get_webview_window("main").unwrap();
             window.set_title("Command Center").unwrap();
