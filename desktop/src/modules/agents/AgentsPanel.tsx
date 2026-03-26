@@ -1,194 +1,263 @@
-import { useEffect, useState } from "react";
-import { open } from "@tauri-apps/plugin-shell";
-import { load } from "@tauri-apps/plugin-store";
-import { ModuleCard } from "../../components/ModuleCard";
+import { useEffect, useState, useCallback } from "react";
+import {
+  api, saveCreds, loadCreds, clearCreds,
+  getMe, getAgents, getDashboard, getIssues, getProjects,
+  type PaperclipCreds, type Agent, type Issue, type Project, type DashboardData,
+} from "../../lib/paperclip";
 import styles from "../shared.module.css";
+import pp from "./AgentsPanel.module.css";
 
-interface HealthStatus {
-  status: string;
-  version: string;
-  deploymentMode: string;
+// ── Status helpers ─────────────────────────────────────────────────────
+const STATUS_COLOR: Record<string, string> = {
+  done: "var(--success)", in_progress: "var(--accent-bright)",
+  todo: "var(--text-muted)", blocked: "var(--danger)",
+  in_review: "var(--warning)", backlog: "var(--text-muted)",
+  cancelled: "var(--text-muted)",
+};
+const PRIORITY_LABEL: Record<string, string> = {
+  critical: "🔴", high: "🟠", medium: "🟡", low: "⚪",
+};
+
+// ── Connect form ───────────────────────────────────────────────────────
+function ConnectForm({ onConnect }: { onConnect: (c: PaperclipCreds) => void }) {
+  const [form, setForm] = useState({ apiUrl: "https://paperclip.ing", apiKey: "", companyId: "" });
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  async function submit() {
+    if (!form.apiKey.trim() || !form.companyId.trim()) { setError("API key and Company ID are required."); return; }
+    setLoading(true); setError("");
+    try {
+      api.setCreds(form);
+      await getMe(); // validates creds
+      await saveCreds(form);
+      onConnect(form);
+    } catch {
+      setError("Could not connect — check your API key and Company ID.");
+    } finally { setLoading(false); }
+  }
+
+  return (
+    <div className={pp.connectWrap}>
+      <div className={pp.connectCard}>
+        <div className={pp.connectLogo}>⬡</div>
+        <h2 className={pp.connectTitle}>Connect to Paperclip</h2>
+        <p className={pp.connectSub}>Enter your credentials to access agents, goals, and issues.</p>
+
+        <div className={pp.field}>
+          <label className={pp.label}>API URL</label>
+          <input className={pp.input} value={form.apiUrl}
+            onChange={e => setForm(f => ({ ...f, apiUrl: e.target.value }))}
+            placeholder="https://paperclip.ing" />
+        </div>
+        <div className={pp.field}>
+          <label className={pp.label}>Company ID</label>
+          <input className={pp.input} value={form.companyId}
+            onChange={e => setForm(f => ({ ...f, companyId: e.target.value }))}
+            placeholder="your-company-id" />
+        </div>
+        <div className={pp.field}>
+          <label className={pp.label}>API Key</label>
+          <input className={pp.input} type="password" value={form.apiKey}
+            onChange={e => setForm(f => ({ ...f, apiKey: e.target.value }))}
+            onKeyDown={e => e.key === "Enter" && submit()}
+            placeholder="pk_live_…" />
+        </div>
+
+        {error && <p className={pp.error}>{error}</p>}
+
+        <button className={pp.connectBtn} onClick={submit} disabled={loading}>
+          {loading ? "Connecting…" : "Connect"}
+        </button>
+      </div>
+    </div>
+  );
 }
 
-type ConnectorState = "disconnected" | "connecting" | "connected" | "error";
+// ── Org chart node ─────────────────────────────────────────────────────
+function AgentNode({ agent, children }: { agent: Agent; children?: React.ReactNode }) {
+  return (
+    <div className={pp.orgBranch}>
+      <div className={pp.orgNode}>
+        <span className={pp.orgDot} data-live={agent.isLive} />
+        <div>
+          <div className={pp.orgName}>{agent.name}</div>
+          <div className={pp.orgRole}>{agent.role} · {agent.model ?? "Claude"}</div>
+        </div>
+      </div>
+      {children && <div className={pp.orgChildren}>{children}</div>}
+    </div>
+  );
+}
 
-async function getStore() {
-  return load("connectors.bin", { defaults: {}, autoSave: true });
-}
-async function readKey(key: string): Promise<string | null> {
-  const val = await (await getStore()).get<string>(key);
-  return val !== undefined ? val : null;
-}
-async function writeKey(key: string, value: string) {
-  (await getStore()).set(key, value);
-}
-async function deleteKey(key: string) {
-  (await getStore()).delete(key);
-}
-
-const CLAUDE_OAUTH_URL =
-  "https://claude.ai/oauth/authorize?client_id=paperclip-desktop&response_type=code&scope=api";
-const GEMINI_OAUTH_URL =
-  "https://accounts.google.com/o/oauth2/v2/auth?client_id=paperclip-desktop&response_type=code&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fgenerativeai&redirect_uri=paperclip%3A%2F%2Foauth%2Fgemini";
-
+// ── Main panel ─────────────────────────────────────────────────────────
 export function AgentsPanel() {
-  const [health, setHealth] = useState<HealthStatus | null>(null);
-  const [claudeState, setClaudeState] = useState<ConnectorState>("disconnected");
-  const [geminiState, setGeminiState] = useState<ConnectorState>("disconnected");
-  const [zoKey, setZoKey] = useState("");
-  const [zoEditing, setZoEditing] = useState(false);
-  const [zoInput, setZoInput] = useState("");
-  const [now, setNow] = useState(new Date());
+  const [creds, setCreds]       = useState<PaperclipCreds | null>(null);
+  const [loading, setLoading]   = useState(true);
+  const [agents, setAgents]     = useState<Agent[]>([]);
+  const [issues, setIssues]     = useState<Issue[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [_dashboard, setDashboard] = useState<DashboardData | null>(null);
+  const [tab, setTab]           = useState<"agents" | "issues" | "projects">("agents");
+  const [refreshing, setRefreshing] = useState(false);
 
+  // Load saved creds on mount
   useEffect(() => {
-    readKey("claude_connected").then((v) => v === "true" && setClaudeState("connected"));
-    readKey("gemini_connected").then((v) => v === "true" && setGeminiState("connected"));
-    readKey("zo_api_key").then((v) => v && setZoKey(v));
+    loadCreds().then(c => {
+      if (c) { api.setCreds(c); setCreds(c); } else { setLoading(false); }
+    });
+  }, []);
+
+  const fetchAll = useCallback(async (c: PaperclipCreds) => {
+    setRefreshing(true);
+    try {
+      const [agentsRes, dashRes, issuesRes, projRes] = await Promise.allSettled([
+        getAgents(c.companyId),
+        getDashboard(c.companyId),
+        getIssues(c.companyId, "?status=todo,in_progress,blocked&limit=30"),
+        getProjects(c.companyId),
+      ]);
+      if (agentsRes.status === "fulfilled") setAgents(agentsRes.value.agents ?? []);
+      if (dashRes.status === "fulfilled")   setDashboard(dashRes.value);
+      if (issuesRes.status === "fulfilled") setIssues(issuesRes.value.issues ?? []);
+      if (projRes.status === "fulfilled")   setProjects(projRes.value.projects ?? []);
+    } finally { setRefreshing(false); setLoading(false); }
   }, []);
 
   useEffect(() => {
-    fetch("/api/health").then((r) => r.json()).then(setHealth).catch(() => setHealth(null));
-  }, []);
+    if (creds) fetchAll(creds);
+  }, [creds, fetchAll]);
 
-  // Live clock
-  useEffect(() => {
-    const t = setInterval(() => setNow(new Date()), 1000);
-    return () => clearInterval(t);
-  }, []);
+  function handleConnect(c: PaperclipCreds) { setCreds(c); setLoading(true); }
+  function handleDisconnect() { clearCreds(); setCreds(null); setAgents([]); setIssues([]); setDashboard(null); }
 
-  useEffect(() => {
-    const handler = (e: MessageEvent) => {
-      if (e.data?.type === "oauth_callback") {
-        if (e.data.provider === "claude") { writeKey("claude_connected", "true"); setClaudeState("connected"); }
-        if (e.data.provider === "gemini") { writeKey("gemini_connected", "true"); setGeminiState("connected"); }
-      }
-    };
-    window.addEventListener("message", handler);
-    return () => window.removeEventListener("message", handler);
-  }, []);
+  // ── Not connected ──
+  if (!loading && !creds) return <ConnectForm onConnect={handleConnect} />;
+  if (loading) return (
+    <div className={styles.module}>
+      <div className={pp.loadingState}>
+        <span className={pp.loadingDot} />
+        <span className={pp.loadingDot} />
+        <span className={pp.loadingDot} />
+      </div>
+    </div>
+  );
 
-  async function connectClaude() {
-    setClaudeState("connecting");
-    try { await open(CLAUDE_OAUTH_URL); } catch { setClaudeState("error"); }
-  }
-  async function connectGemini() {
-    setGeminiState("connecting");
-    try { await open(GEMINI_OAUTH_URL); } catch { setGeminiState("error"); }
-  }
-  async function disconnectClaude() { await deleteKey("claude_connected"); setClaudeState("disconnected"); }
-  async function disconnectGemini() { await deleteKey("gemini_connected"); setGeminiState("disconnected"); }
-  async function saveZoKey() { await writeKey("zo_api_key", zoInput); setZoKey(zoInput); setZoEditing(false); }
+  // Build org tree
+  const roots   = agents.filter(a => !a.managerId);
+  const reports = (id: string) => agents.filter(a => a.managerId === id);
 
-  function statusOf(s: ConnectorState): "active" | "pending" | "inactive" {
-    return s === "connected" ? "active" : s === "connecting" ? "pending" : "inactive";
-  }
-  function subtitleOf(s: ConnectorState, label: string) {
-    if (s === "connected") return `${label} connected`;
-    if (s === "connecting") return "Opening browser…";
-    if (s === "error") return "Connection failed";
-    return "Not connected";
+  function renderTree(a: Agent): React.ReactNode {
+    const children = reports(a.id);
+    return (
+      <AgentNode key={a.id} agent={a}>
+        {children.length > 0 && children.map(renderTree)}
+      </AgentNode>
+    );
   }
 
-  const connectedCount = [claudeState, geminiState, zoKey ? "connected" : ""].filter(s => s === "connected").length;
-  const timeStr = now.toLocaleTimeString("en-CA", { hour: "2-digit", minute: "2-digit" });
-  const dateStr = now.toLocaleDateString("en-CA", { weekday: "long", month: "long", day: "numeric" });
+  const liveCount  = agents.filter(a => a.isLive).length;
+  const openIssues = issues.filter(i => i.status !== "done" && i.status !== "cancelled");
 
   return (
     <div className={styles.module}>
-      <div className={styles.moduleHeader}>
-        <h1 className={styles.moduleTitle}>Command Center</h1>
-        <p className={styles.moduleSubtitle}>{dateStr}</p>
-      </div>
-
-      {/* ── Hero bento row ── */}
-      <div className={styles.bentoHero}>
-        {/* Status hero */}
-        <div className={styles.heroCard}>
-          <div className={styles.heroTime}>{timeStr}</div>
-          <div className={styles.heroLabel}>
-            {health?.status === "ok" ? "All systems operational" : "Backend offline"}
-          </div>
-          <div className={styles.heroMeta}>
-            {connectedCount}/3 connectors live
-            {health && <span className={styles.heroPill}>v{health.version} · {health.deploymentMode}</span>}
-          </div>
+      {/* ── Header ── */}
+      <div className={pp.topBar}>
+        <div>
+          <h1 className={styles.moduleTitle}>Command Center</h1>
+          <p className={styles.moduleSubtitle}>
+            {agents.length} agents · {openIssues.length} open issues · {projects.length} projects
+          </p>
         </div>
-
-        {/* Audit trail */}
-        <div className={styles.sideStack}>
-          <div className={styles.miniCard}>
-            <span className={styles.miniDot} data-status="active" />
-            <div>
-              <div className={styles.miniTitle}>Audit Trail</div>
-              <div className={styles.miniSub}>All actions logged</div>
-            </div>
-          </div>
-          <div className={styles.miniCard}>
-            <span className={styles.miniDot} data-status={health?.status === "ok" ? "active" : "inactive"} />
-            <div>
-              <div className={styles.miniTitle}>Paperclip Backend</div>
-              <div className={styles.miniSub}>{health ? `Mode: ${health.deploymentMode}` : "Offline"}</div>
-            </div>
-          </div>
-          <div className={styles.miniCard}>
-            <span className={styles.miniDot} data-status={connectedCount > 0 ? "active" : "inactive"} />
-            <div>
-              <div className={styles.miniTitle}>Agent Network</div>
-              <div className={styles.miniSub}>{connectedCount} active connector{connectedCount !== 1 ? "s" : ""}</div>
-            </div>
-          </div>
+        <div className={pp.topActions}>
+          <button className={pp.refreshBtn} onClick={() => creds && fetchAll(creds)} disabled={refreshing}>
+            {refreshing ? "↻" : "↻"} Refresh
+          </button>
+          <button className={pp.disconnectBtn} onClick={handleDisconnect}>Disconnect</button>
         </div>
       </div>
 
-      {/* ── Connector cards ── */}
-      <div className={styles.section}>
-        <h2 className={styles.sectionTitle}>Connectors</h2>
-        <div className={styles.grid}>
-          <ModuleCard
-            title="Claude CLI"
-            icon="◉"
-            status={statusOf(claudeState)}
-            subtitle={subtitleOf(claudeState, "Claude")}
-            action={
-              claudeState === "connected"
-                ? { label: "Disconnect", onClick: disconnectClaude }
-                : { label: claudeState === "connecting" ? "Connecting…" : "Connect", onClick: connectClaude, disabled: claudeState === "connecting" }
-            }
-          />
-          <ModuleCard
-            title="Gemini"
-            icon="◉"
-            status={statusOf(geminiState)}
-            subtitle={subtitleOf(geminiState, "Gemini")}
-            action={
-              geminiState === "connected"
-                ? { label: "Disconnect", onClick: disconnectGemini }
-                : { label: geminiState === "connecting" ? "Connecting…" : "Connect", onClick: connectGemini, disabled: geminiState === "connecting" }
-            }
-          />
-          <ModuleCard
-            title="Zo Computer"
-            icon="◉"
-            status={zoKey ? "active" : "inactive"}
-            subtitle={zoKey ? `Key set (${zoKey.slice(0, 6)}…)` : "API key not configured"}
-            action={
-              zoEditing
-                ? undefined
-                : { label: zoKey ? "Update key" : "Add API key", onClick: () => { setZoInput(zoKey); setZoEditing(true); } }
-            }
-          >
-            {zoEditing && (
-              <div className={styles.inlineForm}>
-                <input className={styles.inlineInput} type="password" placeholder="zo_live_…" value={zoInput}
-                  onChange={(e) => setZoInput(e.target.value)} onKeyDown={(e) => e.key === "Enter" && saveZoKey()} autoFocus />
-                <button className={styles.inlineSave} onClick={saveZoKey}>Save</button>
-                <button className={styles.inlineCancel} onClick={() => setZoEditing(false)}>✕</button>
-              </div>
-            )}
-          </ModuleCard>
-          <ModuleCard title="OpenClaw" icon="◉" status="inactive" subtitle="Coming soon" />
+      {/* ── Stats row ── */}
+      <div className={pp.statsRow}>
+        <div className={pp.stat}>
+          <span className={pp.statVal}>{agents.length}</span>
+          <span className={pp.statLbl}>Agents</span>
+        </div>
+        <div className={pp.stat}>
+          <span className={pp.statVal} style={{ color: liveCount > 0 ? "var(--success)" : undefined }}>{liveCount}</span>
+          <span className={pp.statLbl}>Live</span>
+        </div>
+        <div className={pp.stat}>
+          <span className={pp.statVal}>{openIssues.length}</span>
+          <span className={pp.statLbl}>Open Issues</span>
+        </div>
+        <div className={pp.stat}>
+          <span className={pp.statVal}>{issues.filter(i => i.status === "blocked").length}</span>
+          <span className={pp.statLbl} style={{ color: issues.filter(i => i.status === "blocked").length > 0 ? "var(--danger)" : undefined }}>Blocked</span>
+        </div>
+        <div className={pp.stat}>
+          <span className={pp.statVal}>{projects.length}</span>
+          <span className={pp.statLbl}>Projects</span>
         </div>
       </div>
+
+      {/* ── Tabs ── */}
+      <div className={pp.tabs}>
+        {(["agents", "issues", "projects"] as const).map(t => (
+          <button key={t} className={`${pp.tab} ${tab === t ? pp.tabActive : ""}`} onClick={() => setTab(t)}>
+            {t.charAt(0).toUpperCase() + t.slice(1)}
+          </button>
+        ))}
+      </div>
+
+      {/* ── Agents org chart ── */}
+      {tab === "agents" && (
+        <div className={pp.orgWrap}>
+          {agents.length === 0
+            ? <div className={styles.placeholder}>No agents found in this company.</div>
+            : <div className={pp.orgTree}>{roots.map(renderTree)}</div>
+          }
+        </div>
+      )}
+
+      {/* ── Issues ── */}
+      {tab === "issues" && (
+        <div className={pp.issueList}>
+          {openIssues.length === 0
+            ? <div className={styles.placeholder}>No open issues 🎉</div>
+            : openIssues.map(issue => {
+                const agent = agents.find(a => a.id === issue.assigneeAgentId);
+                return (
+                  <div key={issue.id} className={pp.issueRow}>
+                    <span className={pp.issuePriority}>{PRIORITY_LABEL[issue.priority] ?? "⚪"}</span>
+                    <span className={pp.issueId}>{issue.identifier}</span>
+                    <span className={pp.issueTitle}>{issue.title}</span>
+                    <span className={pp.issueAgent}>{agent?.name ?? "—"}</span>
+                    <span className={pp.issueStatus} style={{ color: STATUS_COLOR[issue.status] ?? "var(--text-muted)" }}>
+                      {issue.status.replace("_", " ")}
+                    </span>
+                  </div>
+                );
+              })
+          }
+        </div>
+      )}
+
+      {/* ── Projects ── */}
+      {tab === "projects" && (
+        <div className={pp.projectGrid}>
+          {projects.length === 0
+            ? <div className={styles.placeholder}>No projects found.</div>
+            : projects.map(p => (
+                <div key={p.id} className={pp.projectCard}>
+                  <div className={pp.projectName}>{p.name}</div>
+                  <div className={pp.projectKey}>{p.urlKey}</div>
+                  <div className={pp.projectStatus}>{p.status ?? "active"}</div>
+                </div>
+              ))
+          }
+        </div>
+      )}
     </div>
   );
 }
