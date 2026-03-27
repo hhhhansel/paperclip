@@ -135,6 +135,29 @@
 
 .stepBtns { display: flex; gap: var(--space-sm); flex-wrap: wrap; margin-bottom: var(--space-sm); }
 
+.inputRow {
+  display: flex;
+  gap: var(--space-sm);
+  align-items: center;
+  margin-bottom: 0;
+}
+.inputRow .input { margin-bottom: 0; flex: 1; }
+
+.stepBtnSmall {
+  padding: 8px 14px;
+  font-size: 12px; font-weight: 600;
+  border-radius: 100px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: all var(--transition-fast);
+}
+.stepBtnSmall:hover:not(:disabled) { border-color: var(--accent-bright); color: var(--accent-bright); }
+.stepBtnSmall:disabled { opacity: 0.4; cursor: not-allowed; }
+
 .stepBtn {
   padding: 6px 14px;
   font-size: 12px; font-weight: 600;

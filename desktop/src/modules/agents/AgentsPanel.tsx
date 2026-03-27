@@ -141,74 +141,74 @@ function SetupStep({ onNext }: { onNext: (apiBase: string) => void }) {
 
 // ── Step 2: Pick company + agent ───────────────────────────────────────
 function AgentStep({ apiBase, onConnect }: { apiBase: string; onConnect: (c: PaperclipCreds) => void }) {
-  const [companies, setCompanies]     = useState<Array<{ id: string; name: string; prefix: string }>>([]);
-  const [agents, setAgents]           = useState<Array<{ id: string; name: string; urlKey: string }>>([]);
-  const [selectedCompany, setSelectedCompany] = useState("");
-  const [selectedAgent, setSelectedAgent]     = useState("");
-  const [loading, setLoading]         = useState(false);
-  const [envOutput, setEnvOutput]     = useState("");
-  const [error, setError]             = useState("");
-  // Manual fallback
-  const [apiKey, setApiKey]           = useState("");
+  const [companyId, setCompanyId]   = useState("");
+  const [agentId, setAgentId]       = useState("");
+  const [agents, setAgents]         = useState<Array<{ id: string; name: string; urlKey: string }>>([]);
+  const [fetching, setFetching]     = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [envOutput, setEnvOutput]   = useState("");
+  const [error, setError]           = useState("");
+  const [apiKey, setApiKey]         = useState("");
 
-  useEffect(() => {
-    setLoading(true);
-    runCLI(["company", "list", "--api-base", apiBase, "--json"]).then(res => {
-      if (res.ok) {
-        try {
-          const parsed = JSON.parse(res.stdout);
-          const list = parsed.companies ?? parsed ?? [];
-          setCompanies(Array.isArray(list) ? list : []);
-          if (list.length === 1) setSelectedCompany(list[0].id);
-        } catch {}
-      }
-      setLoading(false);
-    });
-  }, [apiBase]);
-
-  useEffect(() => {
-    if (!selectedCompany) return;
-    runCLI(["agent", "list", "--company-id", selectedCompany, "--api-base", apiBase, "--json"]).then(res => {
-      if (res.ok) {
-        try {
-          const parsed = JSON.parse(res.stdout);
-          const list = parsed.agents ?? parsed ?? [];
-          setAgents(Array.isArray(list) ? list : []);
-          const ceo = list.find((a: any) => a.role?.toLowerCase().includes("ceo") || a.name?.toLowerCase() === "ceo");
-          if (ceo) setSelectedAgent(ceo.id);
-        } catch {}
-      }
-    });
-  }, [selectedCompany, apiBase]);
-
-  async function generateKey() {
-    if (!selectedCompany || !selectedAgent) { setError("Select a company and agent."); return; }
-    setLoading(true); setError("");
-    const res = await runCLI(["agent", "local-cli", selectedAgent, "--company-id", selectedCompany, "--api-base", apiBase, "--json"]);
+  // Try to auto-populate agents when company ID looks valid
+  async function fetchAgents() {
+    if (!companyId.trim()) { setError("Enter your Company ID first."); return; }
+    setFetching(true); setError("");
+    const res = await runCLI(["agent", "list", "--company-id", companyId.trim(), "--api-base", apiBase, "--json"]);
     if (res.ok) {
       try {
         const parsed = JSON.parse(res.stdout);
-        const key = parsed.apiKey ?? parsed.PAPERCLIP_API_KEY ?? parsed.key;
-        if (key) {
-          setApiKey(key);
-          setEnvOutput(JSON.stringify(parsed, null, 2).slice(0, 400));
-        }
-      } catch { setEnvOutput(res.stdout.slice(0, 400)); }
+        const list = parsed.agents ?? parsed ?? [];
+        const arr = Array.isArray(list) ? list : [];
+        setAgents(arr);
+        if (arr.length === 1) setAgentId(arr[0].id);
+        else if (arr.length === 0) setError("No agents found — enter agent ID manually below.");
+      } catch { setError("Couldn't parse agents — enter agent ID manually."); }
     } else {
-      setError(res.stderr.slice(0, 200) || "Failed to generate API key.");
+      setError("CLI failed — enter agent ID manually below.");
     }
-    setLoading(false);
+    setFetching(false);
+  }
+
+  async function generateKey() {
+    const cid = companyId.trim();
+    const aid = agentId.trim();
+    if (!cid) { setError("Enter your Company ID."); return; }
+    if (!aid) { setError("Enter your Agent ID."); return; }
+    setGenerating(true); setError("");
+    const res = await runCLI(["agent", "local-cli", aid, "--company-id", cid, "--api-base", apiBase]);
+    if (res.ok) {
+      // Try to extract key from JSON output, or just grab it from stdout
+      const raw = res.stdout;
+      try {
+        const parsed = JSON.parse(raw);
+        const key = parsed.apiKey ?? parsed.PAPERCLIP_API_KEY ?? parsed.key;
+        if (key) { setApiKey(key); setEnvOutput(""); return; }
+      } catch {}
+      // Non-JSON — look for a key-like value in the output
+      const match = raw.match(/PAPERCLIP_API_KEY[=\s:]+([A-Za-z0-9._-]{20,})/);
+      if (match) { setApiKey(match[1]); setEnvOutput(""); return; }
+      // Show raw output so user can copy-paste
+      setEnvOutput(raw.slice(0, 600));
+    } else {
+      setError(res.stderr.slice(0, 300) || "Failed to generate API key.");
+      if (res.stderr) setEnvOutput(res.stderr.slice(0, 300));
+    }
+    setGenerating(false);
   }
 
   async function connect() {
-    if (!apiKey) { setError("API key required."); return; }
-    const creds: PaperclipCreds = { apiUrl: apiBase, apiKey, companyId: selectedCompany };
+    const key = apiKey.trim();
+    const cid = companyId.trim();
+    if (!key) { setError("API key required."); return; }
+    if (!cid) { setError("Company ID required."); return; }
+    const creds: PaperclipCreds = { apiUrl: apiBase, apiKey: key, companyId: cid };
     api.setCreds(creds);
     try {
-      await getAgents(selectedCompany);
+      await getAgents(cid);
       await saveCreds(creds);
       onConnect(creds);
-    } catch { setError("Could not connect — check your API key."); }
+    } catch { setError("Could not connect — check your API key and company ID."); }
   }
 
   return (
@@ -216,19 +216,16 @@ function AgentStep({ apiBase, onConnect }: { apiBase: string; onConnect: (c: Pap
       <div className={pp.setupStep}>
         <div className={pp.stepNum}>2</div>
         <div className={pp.stepContent}>
-          <div className={pp.stepTitle}>Select your company</div>
-          {loading ? <div className={pp.stepDesc}>Loading companies…</div> : (
-            companies.length > 0
-              ? <select className={pp.select} value={selectedCompany} onChange={e => setSelectedCompany(e.target.value)}>
-                  <option value="">Select company…</option>
-                  {companies.map(c => <option key={c.id} value={c.id}>{c.name ?? c.prefix}</option>)}
-                </select>
-              : <div className={pp.stepDesc}>No companies found — paste Company ID manually:</div>
-          )}
-          {companies.length === 0 && (
-            <input className={pp.input} value={selectedCompany}
-              onChange={e => setSelectedCompany(e.target.value)} placeholder="company-id" />
-          )}
+          <div className={pp.stepTitle}>Company ID</div>
+          <div className={pp.stepDesc}>Find this in your Paperclip UI under Settings → Company.</div>
+          <div className={pp.inputRow}>
+            <input className={pp.input} value={companyId}
+              onChange={e => { setCompanyId(e.target.value); setAgents([]); }}
+              placeholder="e.g. my-company or UUID" />
+            <button className={pp.stepBtnSmall} onClick={fetchAgents} disabled={fetching || !companyId.trim()}>
+              {fetching ? "…" : "Fetch agents"}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -237,23 +234,42 @@ function AgentStep({ apiBase, onConnect }: { apiBase: string; onConnect: (c: Pap
       <div className={pp.setupStep}>
         <div className={pp.stepNum}>3</div>
         <div className={pp.stepContent}>
-          <div className={pp.stepTitle}>Select your agent & get API key</div>
+          <div className={pp.stepTitle}>Agent ID</div>
+          <div className={pp.stepDesc}>Your agent's ID or URL key (e.g. <code style={{ fontFamily: "monospace", opacity: 0.7 }}>claudecoder</code>).</div>
           {agents.length > 0 && (
-            <select className={pp.select} value={selectedAgent} onChange={e => setSelectedAgent(e.target.value)} style={{ marginBottom: 8 }}>
+            <select className={pp.select} value={agentId} onChange={e => setAgentId(e.target.value)} style={{ marginBottom: 8 }}>
               <option value="">Select agent…</option>
-              {agents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+              {agents.map(a => <option key={a.id} value={a.id}>{a.name} ({a.urlKey})</option>)}
             </select>
           )}
-          <div className={pp.codeBlock}>
-            npx paperclipai agent local-cli {selectedAgent || "<agent-id>"}{" "}
-            --company-id {selectedCompany || "<company-id>"}
-          </div>
-          <button className={pp.stepBtn} onClick={generateKey} disabled={loading || !selectedCompany}>
-            {loading ? "Generating…" : "Generate API key for me"}
-          </button>
-          {envOutput && <div className={pp.logBox}><pre style={{ margin: 0, fontSize: 10 }}>{envOutput}</pre></div>}
+          <input className={pp.input} value={agentId}
+            onChange={e => setAgentId(e.target.value)}
+            placeholder={agents.length > 0 ? "Or paste agent ID manually…" : "Agent ID or URL key"} />
+        </div>
+      </div>
 
-          <div className={pp.orDivider}>— or paste key manually —</div>
+      <div className={pp.setupDivider} />
+
+      <div className={pp.setupStep}>
+        <div className={pp.stepNum}>4</div>
+        <div className={pp.stepContent}>
+          <div className={pp.stepTitle}>Get API key</div>
+          <div className={pp.stepDesc}>Run this in your terminal (from the repo root):</div>
+          <div className={pp.codeBlock} style={{ userSelect: "text" }}>
+            pnpm run paperclipai agent local-cli {agentId.trim() || "<agent-id>"} --company-id {companyId.trim() || "<company-id>"}
+          </div>
+          <button className={pp.stepBtn} onClick={generateKey} disabled={generating || !companyId.trim() || !agentId.trim()}>
+            {generating ? "Generating…" : "Generate API key for me"}
+          </button>
+          {envOutput && (
+            <div className={pp.logBox}>
+              <div className={pp.logLine} style={{ opacity: 0.6, fontSize: 10, marginBottom: 4 }}>
+                Copy your PAPERCLIP_API_KEY from below:
+              </div>
+              <pre style={{ margin: 0, fontSize: 10, whiteSpace: "pre-wrap", wordBreak: "break-all" }}>{envOutput}</pre>
+            </div>
+          )}
+          <div className={pp.orDivider}>— or paste key directly —</div>
           <input className={pp.input} type="password" value={apiKey}
             onChange={e => setApiKey(e.target.value)}
             onKeyDown={e => e.key === "Enter" && connect()}
@@ -263,7 +279,7 @@ function AgentStep({ apiBase, onConnect }: { apiBase: string; onConnect: (c: Pap
 
       {error && <div className={pp.errorBox}>{error}</div>}
 
-      <button className={pp.connectBtn} onClick={connect} disabled={!apiKey}>
+      <button className={pp.connectBtn} onClick={connect} disabled={!apiKey.trim() || !companyId.trim()}>
         Connect to Paperclip →
       </button>
     </div>
