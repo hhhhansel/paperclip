@@ -1,13 +1,14 @@
 import { useEffect, useState, useCallback } from "react";
+import { Command } from "@tauri-apps/plugin-shell";
 import {
   api, saveCreds, loadCreds, clearCreds,
-  getMe, getAgents, getDashboard, getIssues, getProjects,
-  type PaperclipCreds, type Agent, type Issue, type Project, type DashboardData,
+  getAgents, getIssues, getProjects,
+  type PaperclipCreds, type Agent, type Issue, type Project,
 } from "../../lib/paperclip";
 import styles from "../shared.module.css";
 import pp from "./AgentsPanel.module.css";
 
-// ── Status helpers ─────────────────────────────────────────────────────
+// ── Helpers ────────────────────────────────────────────────────────────
 const STATUS_COLOR: Record<string, string> = {
   done: "var(--success)", in_progress: "var(--accent-bright)",
   todo: "var(--text-muted)", blocked: "var(--danger)",
@@ -18,63 +19,270 @@ const PRIORITY_LABEL: Record<string, string> = {
   critical: "🔴", high: "🟠", medium: "🟡", low: "⚪",
 };
 
-// ── Connect form ───────────────────────────────────────────────────────
-function ConnectForm({ onConnect }: { onConnect: (c: PaperclipCreds) => void }) {
-  const [form, setForm] = useState({ apiUrl: "https://paperclip.ing", apiKey: "", companyId: "" });
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
+async function runCLI(args: string[]): Promise<{ stdout: string; stderr: string; ok: boolean }> {
+  try {
+    const cmd = Command.create("npx", ["paperclipai", ...args]);
+    const out = await cmd.execute();
+    return { stdout: out.stdout ?? "", stderr: out.stderr ?? "", ok: out.code === 0 };
+  } catch (e) {
+    return { stdout: "", stderr: String(e), ok: false };
+  }
+}
 
-  async function submit() {
-    if (!form.apiKey.trim() || !form.companyId.trim()) { setError("API key and Company ID are required."); return; }
-    setLoading(true); setError("");
+// ── Step 1: Onboard/detect ─────────────────────────────────────────────
+function SetupStep({ onNext }: { onNext: (apiBase: string) => void }) {
+  const [status, setStatus] = useState<"idle"|"detecting"|"onboarding"|"done"|"error">("idle");
+  const [log, setLog] = useState<string[]>([]);
+  const [apiBase, setApiBase] = useState("http://localhost:3000");
+
+  async function autoDetect() {
+    setStatus("detecting");
+    const res = await runCLI(["context", "show", "--json"]);
+    if (res.ok) {
+      try {
+        const ctx = JSON.parse(res.stdout);
+        const base = ctx.profile?.apiBase ?? ctx.profiles?.default?.apiBase;
+        if (base) { setApiBase(base); setLog([`✓ Found instance at ${base}`]); setStatus("done"); return; }
+      } catch {}
+    }
+    // Try localhost
     try {
-      api.setCreds(form);
-      await getMe(); // validates creds
-      await saveCreds(form);
-      onConnect(form);
-    } catch {
-      setError("Could not connect — check your API key and Company ID.");
-    } finally { setLoading(false); }
+      const r = await fetch("http://localhost:3000/api/health", { signal: AbortSignal.timeout(2000) });
+      if (r.ok) { setApiBase("http://localhost:3000"); setLog(["✓ Found Paperclip at http://localhost:3000"]); setStatus("done"); return; }
+    } catch {}
+    setLog(["No running instance found. Run onboard first."]);
+    setStatus("idle");
+  }
+
+  async function runOnboard() {
+    setStatus("onboarding");
+    setLog(["Running npx paperclipai onboard --yes …", "This may take a minute…"]);
+    const res = await runCLI(["onboard", "--yes"]);
+    if (res.ok) {
+      setLog(l => [...l, "✓ Onboard complete!", res.stdout.slice(0, 200)]);
+      setStatus("done");
+      // Try to read context
+      const ctx = await runCLI(["context", "show", "--json"]);
+      if (ctx.ok) {
+        try {
+          const parsed = JSON.parse(ctx.stdout);
+          const base = parsed.profile?.apiBase ?? parsed.profiles?.default?.apiBase;
+          if (base) setApiBase(base);
+        } catch {}
+      }
+    } else {
+      setLog(l => [...l, "Error: " + res.stderr.slice(0, 300)]);
+      setStatus("error");
+    }
   }
 
   return (
-    <div className={pp.connectWrap}>
-      <div className={pp.connectCard}>
-        <div className={pp.connectLogo}>⬡</div>
-        <h2 className={pp.connectTitle}>Connect to Paperclip</h2>
-        <p className={pp.connectSub}>Enter your credentials to access agents, goals, and issues.</p>
-
-        <div className={pp.field}>
-          <label className={pp.label}>API URL</label>
-          <input className={pp.input} value={form.apiUrl}
-            onChange={e => setForm(f => ({ ...f, apiUrl: e.target.value }))}
-            placeholder="https://paperclip.ing" />
+    <div className={pp.setupCard}>
+      <div className={pp.setupStep}>
+        <div className={pp.stepNum}>1</div>
+        <div className={pp.stepContent}>
+          <div className={pp.stepTitle}>Start your Paperclip instance</div>
+          <div className={pp.stepDesc}>Run this in your terminal if you haven't already:</div>
+          <div className={pp.codeBlock}>npx paperclipai onboard --yes</div>
+          <div className={pp.stepBtns}>
+            <button className={pp.stepBtn} onClick={autoDetect} disabled={status === "detecting"}>
+              {status === "detecting" ? "Detecting…" : "Auto-detect running instance"}
+            </button>
+            <button className={pp.stepBtnSecondary} onClick={runOnboard} disabled={status === "onboarding"}>
+              {status === "onboarding" ? "Running…" : "Run onboard for me"}
+            </button>
+          </div>
+          {log.length > 0 && (
+            <div className={pp.logBox}>
+              {log.map((l, i) => <div key={i} className={pp.logLine}>{l}</div>)}
+            </div>
+          )}
         </div>
-        <div className={pp.field}>
-          <label className={pp.label}>Company ID</label>
-          <input className={pp.input} value={form.companyId}
-            onChange={e => setForm(f => ({ ...f, companyId: e.target.value }))}
-            placeholder="your-company-id" />
-        </div>
-        <div className={pp.field}>
-          <label className={pp.label}>API Key</label>
-          <input className={pp.input} type="password" value={form.apiKey}
-            onChange={e => setForm(f => ({ ...f, apiKey: e.target.value }))}
-            onKeyDown={e => e.key === "Enter" && submit()}
-            placeholder="pk_live_…" />
-        </div>
-
-        {error && <p className={pp.error}>{error}</p>}
-
-        <button className={pp.connectBtn} onClick={submit} disabled={loading}>
-          {loading ? "Connecting…" : "Connect"}
-        </button>
       </div>
+
+      <div className={pp.setupDivider} />
+
+      <div className={pp.setupStep}>
+        <div className={pp.stepNum}>2</div>
+        <div className={pp.stepContent}>
+          <div className={pp.stepTitle}>Instance URL</div>
+          <input className={pp.input} value={apiBase}
+            onChange={e => setApiBase(e.target.value)}
+            placeholder="http://localhost:3000" />
+        </div>
+      </div>
+
+      <button
+        className={pp.connectBtn}
+        disabled={status === "detecting" || status === "onboarding"}
+        onClick={() => onNext(apiBase)}
+      >
+        Continue →
+      </button>
     </div>
   );
 }
 
-// ── Org chart node ─────────────────────────────────────────────────────
+// ── Step 2: Pick company + agent ───────────────────────────────────────
+function AgentStep({ apiBase, onConnect }: { apiBase: string; onConnect: (c: PaperclipCreds) => void }) {
+  const [companies, setCompanies]     = useState<Array<{ id: string; name: string; prefix: string }>>([]);
+  const [agents, setAgents]           = useState<Array<{ id: string; name: string; urlKey: string }>>([]);
+  const [selectedCompany, setSelectedCompany] = useState("");
+  const [selectedAgent, setSelectedAgent]     = useState("");
+  const [loading, setLoading]         = useState(false);
+  const [envOutput, setEnvOutput]     = useState("");
+  const [error, setError]             = useState("");
+  // Manual fallback
+  const [apiKey, setApiKey]           = useState("");
+
+  useEffect(() => {
+    setLoading(true);
+    runCLI(["company", "list", "--api-base", apiBase, "--json"]).then(res => {
+      if (res.ok) {
+        try {
+          const parsed = JSON.parse(res.stdout);
+          const list = parsed.companies ?? parsed ?? [];
+          setCompanies(Array.isArray(list) ? list : []);
+          if (list.length === 1) setSelectedCompany(list[0].id);
+        } catch {}
+      }
+      setLoading(false);
+    });
+  }, [apiBase]);
+
+  useEffect(() => {
+    if (!selectedCompany) return;
+    runCLI(["agent", "list", "--company-id", selectedCompany, "--api-base", apiBase, "--json"]).then(res => {
+      if (res.ok) {
+        try {
+          const parsed = JSON.parse(res.stdout);
+          const list = parsed.agents ?? parsed ?? [];
+          setAgents(Array.isArray(list) ? list : []);
+          const ceo = list.find((a: any) => a.role?.toLowerCase().includes("ceo") || a.name?.toLowerCase() === "ceo");
+          if (ceo) setSelectedAgent(ceo.id);
+        } catch {}
+      }
+    });
+  }, [selectedCompany, apiBase]);
+
+  async function generateKey() {
+    if (!selectedCompany || !selectedAgent) { setError("Select a company and agent."); return; }
+    setLoading(true); setError("");
+    const res = await runCLI(["agent", "local-cli", selectedAgent, "--company-id", selectedCompany, "--api-base", apiBase, "--json"]);
+    if (res.ok) {
+      try {
+        const parsed = JSON.parse(res.stdout);
+        const key = parsed.apiKey ?? parsed.PAPERCLIP_API_KEY ?? parsed.key;
+        if (key) {
+          setApiKey(key);
+          setEnvOutput(JSON.stringify(parsed, null, 2).slice(0, 400));
+        }
+      } catch { setEnvOutput(res.stdout.slice(0, 400)); }
+    } else {
+      setError(res.stderr.slice(0, 200) || "Failed to generate API key.");
+    }
+    setLoading(false);
+  }
+
+  async function connect() {
+    if (!apiKey) { setError("API key required."); return; }
+    const creds: PaperclipCreds = { apiUrl: apiBase, apiKey, companyId: selectedCompany };
+    api.setCreds(creds);
+    try {
+      await getAgents(selectedCompany);
+      await saveCreds(creds);
+      onConnect(creds);
+    } catch { setError("Could not connect — check your API key."); }
+  }
+
+  return (
+    <div className={pp.setupCard}>
+      <div className={pp.setupStep}>
+        <div className={pp.stepNum}>2</div>
+        <div className={pp.stepContent}>
+          <div className={pp.stepTitle}>Select your company</div>
+          {loading ? <div className={pp.stepDesc}>Loading companies…</div> : (
+            companies.length > 0
+              ? <select className={pp.select} value={selectedCompany} onChange={e => setSelectedCompany(e.target.value)}>
+                  <option value="">Select company…</option>
+                  {companies.map(c => <option key={c.id} value={c.id}>{c.name ?? c.prefix}</option>)}
+                </select>
+              : <div className={pp.stepDesc}>No companies found — paste Company ID manually:</div>
+          )}
+          {companies.length === 0 && (
+            <input className={pp.input} value={selectedCompany}
+              onChange={e => setSelectedCompany(e.target.value)} placeholder="company-id" />
+          )}
+        </div>
+      </div>
+
+      <div className={pp.setupDivider} />
+
+      <div className={pp.setupStep}>
+        <div className={pp.stepNum}>3</div>
+        <div className={pp.stepContent}>
+          <div className={pp.stepTitle}>Select your agent & get API key</div>
+          {agents.length > 0 && (
+            <select className={pp.select} value={selectedAgent} onChange={e => setSelectedAgent(e.target.value)} style={{ marginBottom: 8 }}>
+              <option value="">Select agent…</option>
+              {agents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+            </select>
+          )}
+          <div className={pp.codeBlock}>
+            npx paperclipai agent local-cli {selectedAgent || "<agent-id>"}{" "}
+            --company-id {selectedCompany || "<company-id>"}
+          </div>
+          <button className={pp.stepBtn} onClick={generateKey} disabled={loading || !selectedCompany}>
+            {loading ? "Generating…" : "Generate API key for me"}
+          </button>
+          {envOutput && <div className={pp.logBox}><pre style={{ margin: 0, fontSize: 10 }}>{envOutput}</pre></div>}
+
+          <div className={pp.orDivider}>— or paste key manually —</div>
+          <input className={pp.input} type="password" value={apiKey}
+            onChange={e => setApiKey(e.target.value)}
+            onKeyDown={e => e.key === "Enter" && connect()}
+            placeholder="Paste API key…" />
+        </div>
+      </div>
+
+      {error && <div className={pp.errorBox}>{error}</div>}
+
+      <button className={pp.connectBtn} onClick={connect} disabled={!apiKey}>
+        Connect to Paperclip →
+      </button>
+    </div>
+  );
+}
+
+// ── Connect wrapper ────────────────────────────────────────────────────
+function ConnectFlow({ onConnect }: { onConnect: (c: PaperclipCreds) => void }) {
+  const [step, setStep] = useState<1 | 2>(1);
+  const [apiBase, setApiBase] = useState("http://localhost:3000");
+
+  return (
+    <div className={pp.connectWrap}>
+      <div className={pp.connectHeader}>
+        <div className={pp.connectLogo}>⬡</div>
+        <h2 className={pp.connectTitle}>Connect to Paperclip</h2>
+        <p className={pp.connectSub}>Self-hosted agent orchestration — let's find your instance.</p>
+        <div className={pp.stepIndicator}>
+          <div className={`${pp.stepDot} ${step >= 1 ? pp.stepDotActive : ""}`}>1</div>
+          <div className={pp.stepLine} />
+          <div className={`${pp.stepDot} ${step >= 2 ? pp.stepDotActive : ""}`}>2</div>
+        </div>
+      </div>
+
+      {step === 1 && <SetupStep onNext={(base) => { setApiBase(base); setStep(2); }} />}
+      {step === 2 && <AgentStep apiBase={apiBase} onConnect={onConnect} />}
+
+      {step === 2 && (
+        <button className={pp.backBtn} onClick={() => setStep(1)}>← Back</button>
+      )}
+    </div>
+  );
+}
+
+// ── Org chart ──────────────────────────────────────────────────────────
 function AgentNode({ agent, children }: { agent: Agent; children?: React.ReactNode }) {
   return (
     <div className={pp.orgBranch}>
@@ -82,7 +290,7 @@ function AgentNode({ agent, children }: { agent: Agent; children?: React.ReactNo
         <span className={pp.orgDot} data-live={agent.isLive} />
         <div>
           <div className={pp.orgName}>{agent.name}</div>
-          <div className={pp.orgRole}>{agent.role} · {agent.model ?? "Claude"}</div>
+          <div className={pp.orgRole}>{agent.role}{agent.model ? ` · ${agent.model}` : ""}</div>
         </div>
       </div>
       {children && <div className={pp.orgChildren}>{children}</div>}
@@ -90,18 +298,16 @@ function AgentNode({ agent, children }: { agent: Agent; children?: React.ReactNo
   );
 }
 
-// ── Main panel ─────────────────────────────────────────────────────────
+// ── Main dashboard ─────────────────────────────────────────────────────
 export function AgentsPanel() {
   const [creds, setCreds]       = useState<PaperclipCreds | null>(null);
   const [loading, setLoading]   = useState(true);
   const [agents, setAgents]     = useState<Agent[]>([]);
   const [issues, setIssues]     = useState<Issue[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
-  const [_dashboard, setDashboard] = useState<DashboardData | null>(null);
   const [tab, setTab]           = useState<"agents" | "issues" | "projects">("agents");
   const [refreshing, setRefreshing] = useState(false);
 
-  // Load saved creds on mount
   useEffect(() => {
     loadCreds().then(c => {
       if (c) { api.setCreds(c); setCreds(c); } else { setLoading(false); }
@@ -111,41 +317,35 @@ export function AgentsPanel() {
   const fetchAll = useCallback(async (c: PaperclipCreds) => {
     setRefreshing(true);
     try {
-      const [agentsRes, dashRes, issuesRes, projRes] = await Promise.allSettled([
+      const [agentsRes, issuesRes, projRes] = await Promise.allSettled([
         getAgents(c.companyId),
-        getDashboard(c.companyId),
-        getIssues(c.companyId, "?status=todo,in_progress,blocked&limit=30"),
+        getIssues(c.companyId, "?status=todo,in_progress,blocked&limit=40"),
         getProjects(c.companyId),
       ]);
       if (agentsRes.status === "fulfilled") setAgents(agentsRes.value.agents ?? []);
-      if (dashRes.status === "fulfilled")   setDashboard(dashRes.value);
       if (issuesRes.status === "fulfilled") setIssues(issuesRes.value.issues ?? []);
       if (projRes.status === "fulfilled")   setProjects(projRes.value.projects ?? []);
     } finally { setRefreshing(false); setLoading(false); }
   }, []);
 
-  useEffect(() => {
-    if (creds) fetchAll(creds);
-  }, [creds, fetchAll]);
+  useEffect(() => { if (creds) fetchAll(creds); }, [creds, fetchAll]);
 
   function handleConnect(c: PaperclipCreds) { setCreds(c); setLoading(true); }
-  function handleDisconnect() { clearCreds(); setCreds(null); setAgents([]); setIssues([]); setDashboard(null); }
+  function handleDisconnect() { clearCreds(); setCreds(null); setAgents([]); setIssues([]); setLoading(false); }
 
-  // ── Not connected ──
-  if (!loading && !creds) return <ConnectForm onConnect={handleConnect} />;
+  if (!loading && !creds) return <ConnectFlow onConnect={handleConnect} />;
   if (loading) return (
     <div className={styles.module}>
       <div className={pp.loadingState}>
-        <span className={pp.loadingDot} />
-        <span className={pp.loadingDot} />
-        <span className={pp.loadingDot} />
+        <span className={pp.loadingDot} /><span className={pp.loadingDot} /><span className={pp.loadingDot} />
       </div>
     </div>
   );
 
-  // Build org tree
-  const roots   = agents.filter(a => !a.managerId);
-  const reports = (id: string) => agents.filter(a => a.managerId === id);
+  const roots      = agents.filter(a => !a.managerId);
+  const reports    = (id: string) => agents.filter(a => a.managerId === id);
+  const openIssues = issues.filter(i => i.status !== "done" && i.status !== "cancelled");
+  const liveCount  = agents.filter(a => a.isLive).length;
 
   function renderTree(a: Agent): React.ReactNode {
     const children = reports(a.id);
@@ -156,52 +356,34 @@ export function AgentsPanel() {
     );
   }
 
-  const liveCount  = agents.filter(a => a.isLive).length;
-  const openIssues = issues.filter(i => i.status !== "done" && i.status !== "cancelled");
-
   return (
     <div className={styles.module}>
-      {/* ── Header ── */}
       <div className={pp.topBar}>
         <div>
           <h1 className={styles.moduleTitle}>Command Center</h1>
-          <p className={styles.moduleSubtitle}>
-            {agents.length} agents · {openIssues.length} open issues · {projects.length} projects
-          </p>
+          <p className={styles.moduleSubtitle}>{creds?.apiUrl} · {agents.length} agents · {openIssues.length} open</p>
         </div>
         <div className={pp.topActions}>
-          <button className={pp.refreshBtn} onClick={() => creds && fetchAll(creds)} disabled={refreshing}>
-            {refreshing ? "↻" : "↻"} Refresh
-          </button>
+          <button className={pp.refreshBtn} onClick={() => creds && fetchAll(creds)} disabled={refreshing}>↻ Refresh</button>
           <button className={pp.disconnectBtn} onClick={handleDisconnect}>Disconnect</button>
         </div>
       </div>
 
-      {/* ── Stats row ── */}
       <div className={pp.statsRow}>
-        <div className={pp.stat}>
-          <span className={pp.statVal}>{agents.length}</span>
-          <span className={pp.statLbl}>Agents</span>
-        </div>
-        <div className={pp.stat}>
-          <span className={pp.statVal} style={{ color: liveCount > 0 ? "var(--success)" : undefined }}>{liveCount}</span>
-          <span className={pp.statLbl}>Live</span>
-        </div>
-        <div className={pp.stat}>
-          <span className={pp.statVal}>{openIssues.length}</span>
-          <span className={pp.statLbl}>Open Issues</span>
-        </div>
-        <div className={pp.stat}>
-          <span className={pp.statVal}>{issues.filter(i => i.status === "blocked").length}</span>
-          <span className={pp.statLbl} style={{ color: issues.filter(i => i.status === "blocked").length > 0 ? "var(--danger)" : undefined }}>Blocked</span>
-        </div>
-        <div className={pp.stat}>
-          <span className={pp.statVal}>{projects.length}</span>
-          <span className={pp.statLbl}>Projects</span>
-        </div>
+        {[
+          { val: agents.length, lbl: "Agents" },
+          { val: liveCount, lbl: "Live", color: liveCount > 0 ? "var(--success)" : undefined },
+          { val: openIssues.length, lbl: "Open Issues" },
+          { val: issues.filter(i => i.status === "blocked").length, lbl: "Blocked", color: issues.filter(i => i.status === "blocked").length > 0 ? "var(--danger)" : undefined },
+          { val: projects.length, lbl: "Projects" },
+        ].map(s => (
+          <div key={s.lbl} className={pp.stat}>
+            <span className={pp.statVal} style={s.color ? { color: s.color } : {}}>{s.val}</span>
+            <span className={pp.statLbl}>{s.lbl}</span>
+          </div>
+        ))}
       </div>
 
-      {/* ── Tabs ── */}
       <div className={pp.tabs}>
         {(["agents", "issues", "projects"] as const).map(t => (
           <button key={t} className={`${pp.tab} ${tab === t ? pp.tabActive : ""}`} onClick={() => setTab(t)}>
@@ -210,17 +392,15 @@ export function AgentsPanel() {
         ))}
       </div>
 
-      {/* ── Agents org chart ── */}
       {tab === "agents" && (
         <div className={pp.orgWrap}>
           {agents.length === 0
-            ? <div className={styles.placeholder}>No agents found in this company.</div>
+            ? <div className={styles.placeholder}>No agents found.</div>
             : <div className={pp.orgTree}>{roots.map(renderTree)}</div>
           }
         </div>
       )}
 
-      {/* ── Issues ── */}
       {tab === "issues" && (
         <div className={pp.issueList}>
           {openIssues.length === 0
@@ -243,7 +423,6 @@ export function AgentsPanel() {
         </div>
       )}
 
-      {/* ── Projects ── */}
       {tab === "projects" && (
         <div className={pp.projectGrid}>
           {projects.length === 0
