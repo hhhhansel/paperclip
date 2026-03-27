@@ -50,6 +50,7 @@ class PaperclipClient {
       method,
       headers: this.headers,
       body: body ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(8000),
     });
     if (!res.ok) throw new Error(`${method} ${path} → ${res.status}`);
     return res.json();

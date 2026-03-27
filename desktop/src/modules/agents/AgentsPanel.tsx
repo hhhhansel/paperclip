@@ -325,9 +325,29 @@ export function AgentsPanel() {
   const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
-    loadCreds().then(c => {
-      if (c) { api.setCreds(c); setCreds(c); } else { setLoading(false); }
-    });
+    loadCreds()
+      .then(async c => {
+        if (!c) { setLoading(false); return; }
+        // Validate creds are still working before trusting them
+        api.setCreds(c);
+        try {
+          const res = await fetch(`${c.apiUrl}/api/health`, {
+            signal: AbortSignal.timeout(4000),
+            headers: { "Authorization": `Bearer ${c.apiKey}` },
+          });
+          if (res.ok) {
+            setCreds(c);
+          } else {
+            await clearCreds();
+            setLoading(false);
+          }
+        } catch {
+          // Server unreachable — clear creds, show connect form
+          await clearCreds();
+          setLoading(false);
+        }
+      })
+      .catch(() => setLoading(false));
   }, []);
 
   const fetchAll = useCallback(async (c: PaperclipCreds) => {

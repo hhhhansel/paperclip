@@ -22,16 +22,12 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; connect-src 'self' http://127.0.0.1:3100; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:"
+      "csp": "default-src 'self'; connect-src 'self' http://localhost:* http://127.0.0.1:*; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:"
     }
   },
   "plugins": {
-    "notification": {
-      "all": true
-    },
     "shell": {
       "open": true
-    },
-    "store": {}
+    }
   }
 }
