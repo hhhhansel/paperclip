@@ -19,9 +19,14 @@ const PRIORITY_LABEL: Record<string, string> = {
   critical: "🔴", high: "🟠", medium: "🟡", low: "⚪",
 };
 
+// Repo root is one level above the desktop/ folder.
+// __PAPERCLIP_REPO__ is replaced at build time; at runtime we resolve via import.meta.url.
+const REPO_ROOT = new URL("../../../../", import.meta.url).pathname.replace(/\/$/, "");
+
 async function runCLI(args: string[]): Promise<{ stdout: string; stderr: string; ok: boolean }> {
   try {
-    const cmd = Command.create("npx", ["paperclipai", ...args]);
+    // Use the repo's own CLI: pnpm run paperclipai <args>
+    const cmd = Command.create("pnpm", ["run", "paperclipai", ...args], { cwd: REPO_ROOT });
     const out = await cmd.execute();
     return { stdout: out.stdout ?? "", stderr: out.stderr ?? "", ok: out.code === 0 };
   } catch (e) {
@@ -33,10 +38,11 @@ async function runCLI(args: string[]): Promise<{ stdout: string; stderr: string;
 function SetupStep({ onNext }: { onNext: (apiBase: string) => void }) {
   const [status, setStatus] = useState<"idle"|"detecting"|"onboarding"|"done"|"error">("idle");
   const [log, setLog] = useState<string[]>([]);
-  const [apiBase, setApiBase] = useState("http://localhost:3000");
+  const [apiBase, setApiBase] = useState("http://localhost:3100");
 
   async function autoDetect() {
     setStatus("detecting");
+    // Try the repo's context first
     const res = await runCLI(["context", "show", "--json"]);
     if (res.ok) {
       try {
@@ -45,12 +51,20 @@ function SetupStep({ onNext }: { onNext: (apiBase: string) => void }) {
         if (base) { setApiBase(base); setLog([`✓ Found instance at ${base}`]); setStatus("done"); return; }
       } catch {}
     }
-    // Try localhost
-    try {
-      const r = await fetch("http://localhost:3000/api/health", { signal: AbortSignal.timeout(2000) });
-      if (r.ok) { setApiBase("http://localhost:3000"); setLog(["✓ Found Paperclip at http://localhost:3000"]); setStatus("done"); return; }
-    } catch {}
-    setLog(["No running instance found. Run onboard first."]);
+    // Probe default port 3100
+    for (const port of [3100, 3000, 4000]) {
+      try {
+        const r = await fetch(`http://localhost:${port}/api/health`, { signal: AbortSignal.timeout(2000) });
+        if (r.ok) {
+          const base = `http://localhost:${port}`;
+          setApiBase(base);
+          setLog([`✓ Found Paperclip at ${base}`]);
+          setStatus("done");
+          return;
+        }
+      } catch {}
+    }
+    setLog(["No running instance found. Start the server first (see below)."]);
     setStatus("idle");
   }
 
@@ -82,8 +96,10 @@ function SetupStep({ onNext }: { onNext: (apiBase: string) => void }) {
         <div className={pp.stepNum}>1</div>
         <div className={pp.stepContent}>
           <div className={pp.stepTitle}>Start your Paperclip instance</div>
-          <div className={pp.stepDesc}>Run this in your terminal if you haven't already:</div>
-          <div className={pp.codeBlock}>npx paperclipai onboard --yes</div>
+          <div className={pp.stepDesc}>Start the server from your repo root:</div>
+          <div className={pp.codeBlock}>pnpm dev</div>
+          <div className={pp.stepDesc} style={{ marginTop: 0 }}>First time? Run onboard first:</div>
+          <div className={pp.codeBlock}>pnpm run paperclipai onboard --yes</div>
           <div className={pp.stepBtns}>
             <button className={pp.stepBtn} onClick={autoDetect} disabled={status === "detecting"}>
               {status === "detecting" ? "Detecting…" : "Auto-detect running instance"}
@@ -108,7 +124,7 @@ function SetupStep({ onNext }: { onNext: (apiBase: string) => void }) {
           <div className={pp.stepTitle}>Instance URL</div>
           <input className={pp.input} value={apiBase}
             onChange={e => setApiBase(e.target.value)}
-            placeholder="http://localhost:3000" />
+            placeholder="http://localhost:3100" />
         </div>
       </div>
 
@@ -257,7 +273,7 @@ function AgentStep({ apiBase, onConnect }: { apiBase: string; onConnect: (c: Pap
 // ── Connect wrapper ────────────────────────────────────────────────────
 function ConnectFlow({ onConnect }: { onConnect: (c: PaperclipCreds) => void }) {
   const [step, setStep] = useState<1 | 2>(1);
-  const [apiBase, setApiBase] = useState("http://localhost:3000");
+  const [apiBase, setApiBase] = useState("http://localhost:3100");
 
   return (
     <div className={pp.connectWrap}>
